@@ -1,0 +1,159 @@
+import Foundation
+import CoreGraphics
+
+/// Bộ xử lý tín hiệu sinh trắc tổng thể từ chuỗi khung hình camera mặt
+public final class SignalProcessor {
+    private let sampleRate: Double = 30.0
+    private let bufferCapacity: Int = 300 // Lưu trữ 10 giây gần nhất (300 frames)
+
+    private var redBuffer: [Double] = []
+    private var greenBuffer: [Double] = []
+    private var blueBuffer: [Double] = []
+    private var timestamps: [TimeInterval] = []
+
+    private let posAlgorithm = POSAlgorithm(windowSize: 45)
+    private let bandpassFilter = ButterworthBandpassFilter(sampleRate: 30.0, lowCutoff: 0.75, highCutoff: 3.5)
+    private let respirationFilter = ButterworthBandpassFilter(sampleRate: 30.0, lowCutoff: 0.15, highCutoff: 0.4)
+    private let fftAnalyzer = FFTAnalyzer(sampleRate: 30.0)
+
+    public init() {}
+
+    /// Đẩy giá trị màu trung bình RGB của frame hiện tại vào bộ đệm
+    public func appendRGB(red: Double, green: Double, blue: Double, timestamp: TimeInterval) {
+        redBuffer.append(red)
+        greenBuffer.append(green)
+        blueBuffer.append(blue)
+        timestamps.append(timestamp)
+
+        if redBuffer.count > bufferCapacity {
+            redBuffer.removeFirst()
+            greenBuffer.removeFirst()
+            blueBuffer.removeFirst()
+            timestamps.removeFirst()
+        }
+    }
+
+    /// Lấy chuỗi sóng PPG đã lọc gần nhất để vẽ đồ thị thời gian thực (Waveform)
+    public func getLatestFilteredWaveform(count: Int = 100) -> [Double] {
+        guard redBuffer.count >= 45 else {
+            return [Double](repeating: 0.0, count: count)
+        }
+        let posRaw = posAlgorithm.extractPulse(red: redBuffer, green: greenBuffer, blue: blueBuffer)
+        let filtered = bandpassFilter.filterSignal(posRaw)
+        
+        let slice = filtered.suffix(count)
+        return Array(slice)
+    }
+
+    /// Phân tích và tính toán toàn bộ chỉ số sinh trắc học hiện tại
+    public func computeVitalMetrics() -> VitalMetrics? {
+        guard redBuffer.count >= 90 else { // Cần tối thiểu 3 giây tín hiệu (90 frames)
+            return nil
+        }
+
+        // 1. Thuật toán POS tách xung nhịp
+        let posRaw = posAlgorithm.extractPulse(red: redBuffer, green: greenBuffer, blue: blueBuffer)
+        let ppgSignal = bandpassFilter.filterSignal(posRaw)
+
+        // 2. Phân tích phổ nhịp tim (0.75 - 3.5 Hz ~ 45 - 210 BPM)
+        guard let hrSpectral = fftAnalyzer.analyzeFrequency(signal: ppgSignal, minFreq: 0.75, maxFreq: 3.5) else {
+            return nil
+        }
+        let hrBpm = hrSpectral.peakFrequency * 60.0
+
+        // 3. Phân tích HRV (SDNN, RMSSD) từ các đỉnh cực đại cục bộ
+        let (sdnn, rmssd) = calculateHRV(from: ppgSignal)
+
+        // 4. Ước lượng nhịp thở Respiration Rate (0.15 - 0.4 Hz ~ 9 - 24 lần/phút)
+        let respSignal = respirationFilter.filterSignal(posRaw)
+        let respSpectral = fftAnalyzer.analyzeFrequency(signal: respSignal, minFreq: 0.15, maxFreq: 0.4)
+        let respRateBpm = (respSpectral?.peakFrequency ?? 0.25) * 60.0
+
+        // 5. Tính chỉ số căng thẳng Stress Index (Dựa trên tỷ lệ tương quan nghịch với RMSSD & HR)
+        // RMSSD cao thường phản ánh hệ đối giao cảm tốt, ít căng thẳng
+        let normalizedRmssd = min(max(rmssd, 10.0), 100.0)
+        let rawStress = 100.0 - (normalizedRmssd - 10.0) * (60.0 / 90.0) + (hrBpm > 85 ? (hrBpm - 85) * 0.5 : 0)
+        let stressIndex = min(max(rawStress, 5.0), 95.0)
+
+        // 6. Điểm sức sống và tuổi sinh học làn da (Skin Vitality & Bio-Age)
+        let signalQuality = min(max(hrSpectral.snr / 5.0, 0.2), 1.0)
+        let skinVitality = min(max(70.0 + (100.0 - stressIndex) * 0.2 + signalQuality * 10.0, 40.0), 98.0)
+        let estimatedSkinAge = max(20, min(65, Int(28.0 + (stressIndex - 40.0) * 0.15)))
+
+        return VitalMetrics(
+            heartRateBPM: hrBpm,
+            hrvSDNN: sdnn,
+            hrvRMSSD: rmssd,
+            respirationRateBPM: respRateBpm,
+            stressIndex: stressIndex,
+            skinVitalityScore: skinVitality,
+            estimatedSkinAge: estimatedSkinAge,
+            signalQuality: signalQuality,
+            timestamp: Date()
+        )
+    }
+
+    /// Tính toán các chỉ số biến thiên nhịp tim HRV từ đỉnh R-R
+    private func calculateHRV(from signal: [Double]) -> (sdnn: Double, rmssd: Double) {
+        guard signal.count > 30 else { return (40.0, 35.0) }
+
+        // Tìm các đỉnh cực đại (local maxima peaks)
+        var peakIndices: [Int] = []
+        let minPeakDistance = Int(sampleRate * 0.35) // Khoảng cách tối thiểu 350ms (tương đương max 170 BPM)
+
+        for i in 2..<(signal.count - 2) {
+            if signal[i] > signal[i - 1] && signal[i] > signal[i - 2] &&
+               signal[i] > signal[i + 1] && signal[i] > signal[i + 2] &&
+               signal[i] > 0 { // Ngưỡng biên độ dương
+                if let lastPeak = peakIndices.last {
+                    if (i - lastPeak) >= minPeakDistance {
+                        peakIndices.append(i)
+                    }
+                } else {
+                    peakIndices.append(i)
+                }
+            }
+        }
+
+        guard peakIndices.count >= 3 else {
+            return (42.0, 38.0) // Giá trị tham chiếu trung bình mặc định
+        }
+
+        // Chuyển đổi khoảng cách đỉnh thành khoảng cách mili-giây (RR intervals in ms)
+        var rrIntervals: [Double] = []
+        for i in 0..<(peakIndices.count - 1) {
+            let diffFrames = Double(peakIndices[i + 1] - peakIndices[i])
+            let diffMs = (diffFrames / sampleRate) * 1000.0
+            // Lọc các khoảng hợp lý từ 300ms đến 1500ms (40 - 200 BPM)
+            if diffMs >= 300.0 && diffMs <= 1500.0 {
+                rrIntervals.append(diffMs)
+            }
+        }
+
+        guard rrIntervals.count >= 2 else { return (42.0, 38.0) }
+
+        // 1. Tính SDNN
+        let meanRR = rrIntervals.reduce(0.0, +) / Double(rrIntervals.count)
+        let variance = rrIntervals.reduce(0.0) { $0 + pow($1 - meanRR, 2.0) } / Double(rrIntervals.count - 1)
+        let sdnn = sqrt(max(0.0, variance))
+
+        // 2. Tính RMSSD
+        var sumSquaredDiff = 0.0
+        for i in 0..<(rrIntervals.count - 1) {
+            let diff = rrIntervals[i + 1] - rrIntervals[i]
+            sumSquaredDiff += pow(diff, 2.0)
+        }
+        let rmssd = sqrt(sumSquaredDiff / Double(rrIntervals.count - 1))
+
+        return (sdnn: min(max(sdnn, 15.0), 120.0), rmssd: min(max(rmssd, 12.0), 110.0))
+    }
+
+    public func reset() {
+        redBuffer.removeAll()
+        greenBuffer.removeAll()
+        blueBuffer.removeAll()
+        timestamps.removeAll()
+        bandpassFilter.reset()
+        respirationFilter.reset()
+    }
+}
