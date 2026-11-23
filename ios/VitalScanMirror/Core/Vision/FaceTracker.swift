@@ -3,34 +3,33 @@ import Vision
 import CoreMedia
 import CoreImage
 
-/// Bộ theo dõi và nhận diện các vùng da quan tâm (ROI) trên khuôn mặt bằng Apple Vision Framework
+/// Bộ theo dõi và nhận diện các vùng da quan tâm (ROI) trên khuôn mặt bằng Apple Vision Framework (Stateless & Memory safe)
 public final class FaceTracker {
-    private var sequenceHandler = VNSequenceRequestHandler()
-
     public init() {}
 
     /// Nhận diện khuôn mặt và trích xuất tọa độ các vùng ROI (Trán, 2 bên gò má)
     public func detectFaceROI(in pixelBuffer: CVPixelBuffer) -> FaceROI? {
-        let request = VNDetectFaceLandmarksRequest()
+        let request = VNDetectFaceRectanglesRequest()
         #if targetEnvironment(simulator)
         request.usesCPUOnly = true
         #endif
 
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
         do {
-            try sequenceHandler.perform([request], on: pixelBuffer, orientation: .up)
+            try handler.perform([request])
         } catch {
             return nil
         }
 
-        guard let results = request.results as? [VNFaceObservation],
+        guard let results = request.results,
               let primaryFace = results.first else {
             return nil
         }
 
         let faceBounds = primaryFace.boundingBox
-        let isCentered = (faceBounds.midX >= 0.25 && faceBounds.midX <= 0.75) &&
-                         (faceBounds.midY >= 0.25 && faceBounds.midY <= 0.75) &&
-                         (faceBounds.width >= 0.25 && faceBounds.height >= 0.3)
+        let isCentered = (faceBounds.midX >= 0.18 && faceBounds.midX <= 0.82) &&
+                         (faceBounds.midY >= 0.18 && faceBounds.midY <= 0.82) &&
+                         (faceBounds.width >= 0.20 && faceBounds.height >= 0.25)
 
         // Trích xuất vùng trán (Forehead): Vùng phía trên lông mày
         let foreheadRect = CGRect(
@@ -65,7 +64,7 @@ public final class FaceTracker {
         )
     }
 
-    /// Trích xuất giá trị màu trung bình RGB từ các vùng ROI của CVPixelBuffer
+    /// Trích xuất giá trị màu trung bình RGB từ các vùng ROI của CVPixelBuffer an toàn tuyệt đối
     public func extractMeanRGB(from pixelBuffer: CVPixelBuffer, roi: FaceROI) -> (r: Double, g: Double, b: Double)? {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -75,6 +74,7 @@ public final class FaceTracker {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let totalBytes = CVPixelBufferGetDataSize(pixelBuffer)
         let bufferPtr = baseAddress.assumingMemoryBound(to: UInt8.self)
 
         // Lấy mẫu từ các vùng ROI: Forehead + Cheeks
@@ -91,11 +91,14 @@ public final class FaceTracker {
             let endX = max(0, min(width - 1, Int((rect.origin.x + rect.size.width) * Double(width))))
             let endY = max(0, min(height - 1, Int((1.0 - rect.origin.y) * Double(height))))
 
+            guard startX < endX && startY < endY else { continue }
+
             let step = 3 // Lấy mẫu cách bước để tối ưu CPU 30 FPS
             for y in stride(from: startY, to: endY, by: step) {
                 let rowOffset = y * bytesPerRow
                 for x in stride(from: startX, to: endX, by: step) {
                     let pixelOffset = rowOffset + x * 4
+                    guard pixelOffset + 2 < totalBytes else { continue }
                     // Định dạng kCVPixelFormatType_32BGRA
                     let b = Double(bufferPtr[pixelOffset])
                     let g = Double(bufferPtr[pixelOffset + 1])

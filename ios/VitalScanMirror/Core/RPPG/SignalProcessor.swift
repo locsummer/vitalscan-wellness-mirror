@@ -1,11 +1,12 @@
 import Foundation
 import CoreGraphics
 
-/// Bộ xử lý tín hiệu sinh trắc tổng thể từ chuỗi khung hình camera mặt
+/// Bộ xử lý tín hiệu sinh trắc tổng thể từ chuỗi khung hình camera mặt (Thread-safe)
 public final class SignalProcessor {
     private let sampleRate: Double = 30.0
     private let bufferCapacity: Int = 300 // Lưu trữ 10 giây gần nhất (300 frames)
 
+    private let lock = NSLock()
     private var redBuffer: [Double] = []
     private var greenBuffer: [Double] = []
     private var blueBuffer: [Double] = []
@@ -18,8 +19,11 @@ public final class SignalProcessor {
 
     public init() {}
 
-    /// Đẩy giá trị màu trung bình RGB của frame hiện tại vào bộ đệm
+    /// Đẩy giá trị màu trung bình RGB của frame hiện tại vào bộ đệm (Thread-safe)
     public func appendRGB(red: Double, green: Double, blue: Double, timestamp: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+
         redBuffer.append(red)
         greenBuffer.append(green)
         blueBuffer.append(blue)
@@ -35,10 +39,17 @@ public final class SignalProcessor {
 
     /// Lấy chuỗi sóng PPG đã lọc gần nhất để vẽ đồ thị thời gian thực (Waveform)
     public func getLatestFilteredWaveform(count: Int = 100) -> [Double] {
+        lock.lock()
         guard redBuffer.count >= 45 else {
+            lock.unlock()
             return [Double](repeating: 0.0, count: count)
         }
-        let posRaw = posAlgorithm.extractPulse(red: redBuffer, green: greenBuffer, blue: blueBuffer)
+        let r = redBuffer
+        let g = greenBuffer
+        let b = blueBuffer
+        lock.unlock()
+
+        let posRaw = posAlgorithm.extractPulse(red: r, green: g, blue: b)
         let filtered = bandpassFilter.filterSignal(posRaw)
         
         let slice = filtered.suffix(count)
@@ -47,12 +58,18 @@ public final class SignalProcessor {
 
     /// Phân tích và tính toán toàn bộ chỉ số sinh trắc học hiện tại
     public func computeVitalMetrics() -> VitalMetrics? {
+        lock.lock()
         guard redBuffer.count >= 90 else { // Cần tối thiểu 3 giây tín hiệu (90 frames)
+            lock.unlock()
             return nil
         }
+        let r = redBuffer
+        let g = greenBuffer
+        let b = blueBuffer
+        lock.unlock()
 
         // 1. Thuật toán POS tách xung nhịp
-        let posRaw = posAlgorithm.extractPulse(red: redBuffer, green: greenBuffer, blue: blueBuffer)
+        let posRaw = posAlgorithm.extractPulse(red: r, green: g, blue: b)
         let ppgSignal = bandpassFilter.filterSignal(posRaw)
 
         // 2. Phân tích phổ nhịp tim (0.75 - 3.5 Hz ~ 45 - 210 BPM)
@@ -70,7 +87,6 @@ public final class SignalProcessor {
         let respRateBpm = (respSpectral?.peakFrequency ?? 0.25) * 60.0
 
         // 5. Tính chỉ số căng thẳng Stress Index (Dựa trên tỷ lệ tương quan nghịch với RMSSD & HR)
-        // RMSSD cao thường phản ánh hệ đối giao cảm tốt, ít căng thẳng
         let normalizedRmssd = min(max(rmssd, 10.0), 100.0)
         let rawStress = 100.0 - (normalizedRmssd - 10.0) * (60.0 / 90.0) + (hrBpm > 85 ? (hrBpm - 85) * 0.5 : 0)
         let stressIndex = min(max(rawStress, 5.0), 95.0)
@@ -149,6 +165,8 @@ public final class SignalProcessor {
     }
 
     public func reset() {
+        lock.lock()
+        defer { lock.unlock() }
         redBuffer.removeAll()
         greenBuffer.removeAll()
         blueBuffer.removeAll()

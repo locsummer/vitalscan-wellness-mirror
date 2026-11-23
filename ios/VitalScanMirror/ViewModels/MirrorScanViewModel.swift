@@ -23,6 +23,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private let totalScanDuration: Double = 20.0 // Quét trong 20 giây
     private var scanStartTime: Date?
     private var isActivelyMeasuring = false
+    private var consecutiveMissedFaceFrames = 0
 
     public init() {
         cameraManager.frameDelegate = self
@@ -42,7 +43,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
 
     public func startScanning() {
         signalProcessor.reset()
-        isActivelyMeasuring = false
+        consecutiveMissedFaceFrames = 0
         scanProgress = 0.0
         remainingSeconds = Int(totalScanDuration)
         scanState = .searchingFace
@@ -54,6 +55,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         scanTimer?.invalidate()
         scanTimer = nil
         isActivelyMeasuring = false
+        consecutiveMissedFaceFrames = 0
         cameraManager.lockCameraParameters(false)
         scanState = .idle
     }
@@ -141,9 +143,12 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         guard let roi = faceTracker.detectFaceROI(in: pixelBuffer) else {
             Task { @MainActor in
                 if self.isActivelyMeasuring {
-                    // Nếu mất dấu mặt trong lúc đo, cảnh báo
-                    self.scanState = .failed(reason: "Mất dấu khuôn mặt. Vui lòng nhìn thẳng vào gương.")
-                    self.cancelScanning()
+                    self.consecutiveMissedFaceFrames += 1
+                    // Chỉ hủy và báo lỗi nếu mất dấu liên tục trên 30 frames (~1 giây)
+                    if self.consecutiveMissedFaceFrames > 30 {
+                        self.scanState = .failed(reason: "Mất dấu khuôn mặt. Vui lòng nhìn thẳng vào gương.")
+                        self.cancelScanning()
+                    }
                 } else {
                     self.scanState = .searchingFace
                     self.currentFaceROI = nil
@@ -153,6 +158,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         }
 
         Task { @MainActor in
+            self.consecutiveMissedFaceFrames = 0
             self.currentFaceROI = roi
             if !self.isActivelyMeasuring && roi.isFaceWellCentered {
                 self.scanState = .faceAligned

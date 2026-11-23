@@ -23,7 +23,7 @@ public final class FFTAnalyzer {
         let n = signal.count
         guard n >= 32 else { return nil }
 
-        // Tìm lũy thừa bậc 2 gần nhất lớn hơn hoặc bằng N (Zero-padding)
+        // Tìm lũy thừa bậc 2 gần nhất lớn hơn hoặc bằng N (Zero-padding an toàn)
         let log2n = vDSP_Length(ceil(log2(Double(n))))
         let fftSize = Int(1 << log2n)
         let halfSize = fftSize / 2
@@ -35,14 +35,17 @@ public final class FFTAnalyzer {
         var window = [Double](repeating: 0.0, count: n)
         vDSP_hann_windowD(&window, vDSP_Length(n), Int32(vDSP_HANN_NORM))
 
-        var windowedSignal = [Double](repeating: 0.0, count: n)
-        vDSP_vmulD(signal, 1, window, 1, &windowedSignal, 1, vDSP_Length(n))
+        // Cấp phát mảng đầu vào đủ kích thước fftSize (Zero-padded hoàn toàn) để tránh overread bộ nhớ
+        var paddedSignal = [Double](repeating: 0.0, count: fftSize)
+        for i in 0..<n {
+            paddedSignal[i] = signal[i] * window[i]
+        }
 
         // Khởi tạo mảng thực và ảo cho FFT
         var realParts = [Double](repeating: 0.0, count: halfSize)
         var imagParts = [Double](repeating: 0.0, count: halfSize)
 
-        windowedSignal.withUnsafeBufferPointer { signalPtr in
+        paddedSignal.withUnsafeBufferPointer { signalPtr in
             guard let baseAddress = signalPtr.baseAddress else { return }
             baseAddress.withMemoryRebound(to: DSPDoubleComplex.self, capacity: halfSize) { complexPtr in
                 var splitComplex = DSPDoubleSplitComplex(realp: &realParts, imagp: &imagParts)

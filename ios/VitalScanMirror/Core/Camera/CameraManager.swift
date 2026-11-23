@@ -75,6 +75,15 @@ public final class CameraManager: NSObject, ObservableObject {
 
                 if self.session.canAddOutput(self.videoOutput) {
                     self.session.addOutput(self.videoOutput)
+                    if let connection = self.videoOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = .portrait
+                        }
+                        if connection.isVideoMirroringSupported {
+                            connection.automaticallyAdjustsVideoMirroring = false
+                            connection.isVideoMirrored = true
+                        }
+                    }
                 }
 
                 // Cố định tốc độ khung hình 30 FPS an toàn
