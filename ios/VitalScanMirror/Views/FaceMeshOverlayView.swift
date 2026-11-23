@@ -6,6 +6,7 @@ public struct FaceOvalShape: Shape {
 
     public func path(in rect: CGRect) -> Path {
         var path = Path()
+        guard rect.width > 1 && rect.height > 1 else { return path }
         let cx = rect.midX
         let cy = rect.midY
         let rx = rect.width / 2.0
@@ -103,7 +104,7 @@ public struct FaceMeshOverlayView: View {
                         .animation(.linear(duration: 0.3), value: progress)
 
                     // Badge hiển thị % tiến trình phía trên khung
-                    Text("\(Int(progress * 100))%")
+                    Text("\(progress.isNaN ? 0 : Int(progress * 100))%")
                         .font(.system(size: 13, weight: .black, design: .monospaced))
                         .foregroundColor(.cyan)
                         .padding(.horizontal, 10)

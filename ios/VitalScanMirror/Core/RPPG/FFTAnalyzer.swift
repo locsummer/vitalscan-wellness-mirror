@@ -1,7 +1,7 @@
 import Foundation
 import Accelerate
 
-/// Phân tích phổ tần số bằng Biến đổi Fourier Nhanh (FFT) sử dụng Apple Accelerate Framework vDSP
+/// Phân tích phổ tần số bằng Biến đổi Fourier Nhanh (FFT) sử dụng Apple Accelerate Framework vDSP (100% Safe Memory)
 public final class FFTAnalyzer {
     private let sampleRate: Double
 
@@ -23,7 +23,7 @@ public final class FFTAnalyzer {
         let n = signal.count
         guard n >= 32 else { return nil }
 
-        // Tìm lũy thừa bậc 2 gần nhất lớn hơn hoặc bằng N (Zero-padding an toàn)
+        // Tìm lũy thừa bậc 2 gần nhất lớn hơn hoặc bằng N (Zero-padding)
         let log2n = vDSP_Length(ceil(log2(Double(n))))
         let fftSize = Int(1 << log2n)
         let halfSize = fftSize / 2
@@ -31,27 +31,31 @@ public final class FFTAnalyzer {
         guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else { return nil }
         defer { vDSP_destroy_fftsetup(fftSetup) }
 
-        // Chuẩn bị cửa sổ Hanning (Hanning window) giảm rò rỉ phổ (spectral leakage)
+        // Chuẩn bị cửa sổ Hanning giảm rò rỉ phổ
         var window = [Double](repeating: 0.0, count: n)
         vDSP_hann_windowD(&window, vDSP_Length(n), Int32(vDSP_HANN_NORM))
 
-        // Cấp phát mảng đầu vào đủ kích thước fftSize (Zero-padded hoàn toàn) để tránh overread bộ nhớ
+        // Cấp phát mảng đầu vào đúng kích thước fftSize (Zero-padded hoàn toàn)
         var paddedSignal = [Double](repeating: 0.0, count: fftSize)
         for i in 0..<n {
-            paddedSignal[i] = signal[i] * window[i]
+            let val = signal[i] * window[i]
+            paddedSignal[i] = val.isNaN || val.isInfinite ? 0.0 : val
         }
 
-        // Khởi tạo mảng thực và ảo cho FFT
+        // Tách thành phần chẵn (even) và lẻ (odd) cho split-complex real FFT trực tiếp trong Swift
         var realParts = [Double](repeating: 0.0, count: halfSize)
         var imagParts = [Double](repeating: 0.0, count: halfSize)
 
-        paddedSignal.withUnsafeBufferPointer { signalPtr in
-            guard let baseAddress = signalPtr.baseAddress else { return }
-            baseAddress.withMemoryRebound(to: DSPDoubleComplex.self, capacity: halfSize) { complexPtr in
-                var splitComplex = DSPDoubleSplitComplex(realp: &realParts, imagp: &imagParts)
-                vDSP_ctozD(complexPtr, 2, &splitComplex, 1, vDSP_Length(halfSize))
-                
-                // Thực hiện biến đổi FFT 1 chiều
+        for i in 0..<halfSize {
+            realParts[i] = paddedSignal[2 * i]
+            imagParts[i] = paddedSignal[2 * i + 1]
+        }
+
+        // Thực hiện biến đổi FFT 1 chiều với con trỏ hợp lệ tuyệt đối (KHÔNG bị dangling pointer)
+        realParts.withUnsafeMutableBufferPointer { realBuf in
+            imagParts.withUnsafeMutableBufferPointer { imagBuf in
+                guard let realPtr = realBuf.baseAddress, let imagPtr = imagBuf.baseAddress else { return }
+                var splitComplex = DSPDoubleSplitComplex(realp: realPtr, imagp: imagPtr)
                 vDSP_fft_zripD(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
             }
         }
@@ -59,7 +63,10 @@ public final class FFTAnalyzer {
         // Tính biên độ công suất (Magnitudes)
         var magnitudes = [Double](repeating: 0.0, count: halfSize)
         for i in 0..<halfSize {
-            magnitudes[i] = sqrt(realParts[i] * realParts[i] + imagParts[i] * imagParts[i])
+            let r = realParts[i]
+            let im = imagParts[i]
+            let mag = sqrt(r * r + im * im)
+            magnitudes[i] = mag.isNaN || mag.isInfinite ? 0.0 : mag
         }
 
         // Tạo mảng tần số tương ứng cho từng bin
@@ -78,9 +85,10 @@ public final class FFTAnalyzer {
         for i in 0..<halfSize {
             let f = frequencies[i]
             if f >= minFreq && f <= maxFreq {
-                totalInBandEnergy += magnitudes[i]
-                if magnitudes[i] > maxMag {
-                    maxMag = magnitudes[i]
+                let m = magnitudes[i]
+                totalInBandEnergy += m
+                if m > maxMag {
+                    maxMag = m
                     peakFreq = f
                     peakIdx = i
                 }
@@ -96,7 +104,7 @@ public final class FFTAnalyzer {
         return SpectralResult(
             peakFrequency: peakFreq,
             peakMagnitude: maxMag,
-            snr: snr,
+            snr: snr.isNaN ? 1.0 : snr,
             frequencies: frequencies,
             magnitudes: magnitudes
         )

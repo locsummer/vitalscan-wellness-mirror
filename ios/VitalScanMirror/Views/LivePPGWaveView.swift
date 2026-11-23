@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Biểu đồ sóng quang học thể tích PPG (Photoplethysmography Waveform) thời gian thực
+/// Biểu đồ sóng quang học thể tích PPG (Photoplethysmography Waveform) thời gian thực an toàn đồ họa
 public struct LivePPGWaveView: View {
     public let waveform: [Double]
     public let isMeasuring: Bool
@@ -26,7 +26,7 @@ public struct LivePPGWaveView: View {
                 .stroke(Color.cyan.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
                 // Đường cong sóng PPG mượt mà (Bézier Curve)
-                if isMeasuring && points.count > 1 {
+                if isMeasuring && points.count > 1 && width > 0 && height > 0 {
                     Path { path in
                         let stepX = width / CGFloat(max(points.count - 1, 1))
                         path.move(to: CGPoint(x: 0, y: points[0]))
@@ -60,19 +60,21 @@ public struct LivePPGWaveView: View {
     }
 
     private func normalizeWaveform(_ data: [Double], in height: CGFloat) -> [CGFloat] {
-        guard !data.isEmpty else { return [] }
+        guard !data.isEmpty, height > 0 else { return [] }
         let midY = height / 2.0
-        guard let maxVal = data.max(), let minVal = data.min(), (maxVal - minVal) > 1e-4 else {
-            return data.map { _ in midY }
+        let cleanData = data.filter { !$0.isNaN && !$0.isInfinite }
+        guard !cleanData.isEmpty else { return data.map { _ in midY } }
+        guard let maxVal = cleanData.max(), let minVal = cleanData.min(), (maxVal - minVal) > 1e-4 else {
+            return cleanData.map { _ in midY }
         }
 
         let range = maxVal - minVal
         let usableHeight = height * 0.75
 
-        return data.map { val in
+        return cleanData.map { val in
             let normalized = (val - minVal) / range // 0.0 -> 1.0
-            // Lật trục Y vì tọa độ màn hình iOS gốc ở trên cùng
-            return midY + (0.5 - CGFloat(normalized)) * usableHeight
+            let y = midY + (0.5 - CGFloat(normalized)) * usableHeight
+            return y.isNaN || y.isInfinite ? midY : y
         }
     }
 }

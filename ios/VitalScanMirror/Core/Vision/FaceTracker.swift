@@ -74,7 +74,7 @@ public final class FaceTracker {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let totalBytes = CVPixelBufferGetDataSize(pixelBuffer)
+        let maxOffset = height * bytesPerRow
         let bufferPtr = baseAddress.assumingMemoryBound(to: UInt8.self)
 
         // Lấy mẫu từ các vùng ROI: Forehead + Cheeks
@@ -98,7 +98,7 @@ public final class FaceTracker {
                 let rowOffset = y * bytesPerRow
                 for x in stride(from: startX, to: endX, by: step) {
                     let pixelOffset = rowOffset + x * 4
-                    guard pixelOffset + 2 < totalBytes else { continue }
+                    guard pixelOffset + 3 <= maxOffset else { continue }
                     // Định dạng kCVPixelFormatType_32BGRA
                     let b = Double(bufferPtr[pixelOffset])
                     let g = Double(bufferPtr[pixelOffset + 1])
