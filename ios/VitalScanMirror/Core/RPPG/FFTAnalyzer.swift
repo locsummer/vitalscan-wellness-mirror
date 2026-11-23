@@ -43,7 +43,8 @@ public final class FFTAnalyzer {
         var imagParts = [Double](repeating: 0.0, count: halfSize)
 
         windowedSignal.withUnsafeBufferPointer { signalPtr in
-            signalPtr.baseAddress!.withMemoryRebound(to: DSPDoubleComplex.self, capacity: halfSize) { complexPtr in
+            guard let baseAddress = signalPtr.baseAddress else { return }
+            baseAddress.withMemoryRebound(to: DSPDoubleComplex.self, capacity: halfSize) { complexPtr in
                 var splitComplex = DSPDoubleSplitComplex(realp: &realParts, imagp: &imagParts)
                 vDSP_ctozD(complexPtr, 2, &splitComplex, 1, vDSP_Length(halfSize))
                 

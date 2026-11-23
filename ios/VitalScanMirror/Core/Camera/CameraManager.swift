@@ -77,12 +77,21 @@ public final class CameraManager: NSObject, ObservableObject {
                     self.session.addOutput(self.videoOutput)
                 }
 
-                // Cố định tốc độ khung hình 30 FPS
-                try camera.lockForConfiguration()
-                let targetFrameRate = 30.0
-                camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                camera.unlockForConfiguration()
+                // Cố định tốc độ khung hình 30 FPS an toàn
+                do {
+                    try camera.lockForConfiguration()
+                    let targetFrameRate = 30.0
+                    let supported = camera.activeFormat.videoSupportedFrameRateRanges.contains { range in
+                        range.minFrameRate <= targetFrameRate && targetFrameRate <= range.maxFrameRate
+                    }
+                    if supported {
+                        camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
+                        camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
+                    }
+                    camera.unlockForConfiguration()
+                } catch {
+                    print("Không thể cấu hình frame rate camera: \(error.localizedDescription)")
+                }
 
             } catch {
                 print("Lỗi cấu hình Camera: \(error.localizedDescription)")

@@ -1,5 +1,32 @@
 import SwiftUI
 
+/// Đường vẽ Oval bắt đầu chuẩn từ 12 giờ (top center) và đi theo chiều kim đồng hồ
+public struct FaceOvalShape: Shape {
+    public init() {}
+
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let cx = rect.midX
+        let cy = rect.midY
+        let rx = rect.width / 2.0
+        let ry = rect.height / 2.0
+        
+        let startAngle = -Double.pi / 2.0
+        let endAngle = 3.0 * Double.pi / 2.0
+        let steps = 144
+        
+        path.move(to: CGPoint(x: cx, y: cy - ry))
+        for i in 1...steps {
+            let theta = startAngle + (Double(i) / Double(steps)) * (endAngle - startAngle)
+            let x = cx + rx * cos(theta)
+            let y = cy + ry * sin(theta)
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// Lớp phủ giao diện công nghệ (Cyber-Wellness HUD) với khung định vị khuôn mặt và hiệu ứng quét sinh trắc
 public struct FaceMeshOverlayView: View {
     public let scanState: ScanState
@@ -7,7 +34,7 @@ public struct FaceMeshOverlayView: View {
     public let roi: FaceROI?
     public let remainingSeconds: Int
 
-    @State private var scanLineOffset: CGFloat = -150
+    @State private var scanLineOffset: CGFloat = -140
     @State private var pulseScale: CGFloat = 1.0
 
     public init(scanState: ScanState, progress: Double, roi: FaceROI?, remainingSeconds: Int) {
@@ -31,57 +58,77 @@ public struct FaceMeshOverlayView: View {
                     .mask(
                         ZStack {
                             Rectangle()
-                            Ellipse()
+                            FaceOvalShape()
                                 .frame(width: ovalWidth, height: ovalHeight)
                                 .blendMode(.destinationOut)
                         }
                         .compositingGroup()
                     )
 
-                // 2. Khung Oval định vị mặt
-                Ellipse()
-                    .strokeBorder(
+                // 2. Khung Oval định vị mặt cơ sở
+                FaceOvalShape()
+                    .stroke(
                         LinearGradient(
-                            colors: isMeasuring ? [Color.cyan, Color.green, Color.cyan] : [Color.white.opacity(0.6), Color.cyan.opacity(0.3)],
+                            colors: isMeasuring 
+                                ? [Color.cyan.opacity(0.6), Color.green.opacity(0.4), Color.cyan.opacity(0.6)]
+                                : [Color.white.opacity(0.5), Color.cyan.opacity(0.3)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: isMeasuring ? 3.5 : 2.0
+                        style: StrokeStyle(lineWidth: isMeasuring ? 2.5 : 2.0)
                     )
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.8) : Color.white.opacity(0.2), radius: 10)
+                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.6) : Color.white.opacity(0.15), radius: 8)
 
-                // 3. Vòng tiến trình tròn bao quanh (Progress Circle)
+                // 3. Vòng tiến trình tròn bao quanh KHỚP 100% VỚI KHUNG (Concentric Progress Ring)
                 if isMeasuring {
-                    Ellipse()
+                    // Đường ray nền (Track)
+                    FaceOvalShape()
+                        .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .frame(width: ovalWidth + 12, height: ovalHeight + 12)
+
+                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ
+                    FaceOvalShape()
                         .trim(from: 0.0, to: CGFloat(progress))
                         .stroke(
-                            AngularGradient(
-                                gradient: Gradient(colors: [.cyan, .green, .mint, .cyan]),
-                                center: .center
+                            LinearGradient(
+                                colors: [.cyan, .green, .mint, .cyan],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
                             ),
                             style: StrokeStyle(lineWidth: 6, lineCap: .round)
                         )
-                        .frame(width: ovalWidth + 16, height: ovalHeight + 16)
-                        .rotationEffect(.degrees(-90))
-                        .animation(.linear(duration: 0.5), value: progress)
+                        .frame(width: ovalWidth + 12, height: ovalHeight + 12)
+                        .shadow(color: Color.cyan.opacity(0.9), radius: 8)
+                        .animation(.linear(duration: 0.3), value: progress)
+
+                    // Badge hiển thị % tiến trình phía trên khung
+                    Text("\(Int(progress * 100))%")
+                        .font(.system(size: 13, weight: .black, design: .monospaced))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.cyan.opacity(0.6), lineWidth: 1))
+                        .offset(y: -ovalHeight * 0.5 - 20)
                 }
 
-                // 4. Tia quét Laser di chuyển lên xuống
+                // 4. Tia quét Laser di chuyển lên xuống trong lòng khung
                 if isMeasuring {
                     Rectangle()
                         .fill(
                             LinearGradient(
-                                colors: [.clear, .cyan.opacity(0.7), .clear],
+                                colors: [.clear, .cyan.opacity(0.8), .clear],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
                         )
-                        .frame(width: ovalWidth - 20, height: 4)
+                        .frame(width: ovalWidth - 30, height: 3)
                         .offset(y: scanLineOffset)
                         .onAppear {
                             withAnimation(Animation.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                                scanLineOffset = 150
+                                scanLineOffset = ovalHeight * 0.38
                             }
                         }
                 }

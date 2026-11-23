@@ -184,10 +184,32 @@ struct CameraPreviewWrapper: UIViewRepresentable {
         let view = CameraPreviewUIView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
+        if let connection = view.previewLayer.connection {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = true
+            }
+        }
         return view
     }
 
-    func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {}
+    func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
+        if uiView.previewLayer.session != session {
+            uiView.previewLayer.session = session
+        }
+        if let connection = uiView.previewLayer.connection {
+            if connection.isVideoOrientationSupported && connection.videoOrientation != .portrait {
+                connection.videoOrientation = .portrait
+            }
+            if connection.isVideoMirroringSupported && !connection.isVideoMirrored {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = true
+            }
+        }
+    }
 }
 
 class CameraPreviewUIView: UIView {
