@@ -1,0 +1,43 @@
+name: Build iOS IPA for Sideloadly
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build iOS IPA (Unsigned)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build iOS Application
+        run: |
+          cd ios
+          xcodebuild -project VitalScanMirror.xcodeproj \
+            -scheme VitalScanMirror \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package .app into IPA
+        run: |
+          cd ios
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/VitalScanMirror.app Payload/
+          zip -qr VitalScanMirror.ipa Payload
+          mkdir -p ../output
+          mv VitalScanMirror.ipa ../output/
+
+      - name: Upload IPA to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitalScanMirror-ipa
+          path: output/VitalScanMirror.ipa
+          retention-days: 14
