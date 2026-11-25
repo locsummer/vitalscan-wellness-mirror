@@ -1,28 +1,26 @@
 import SwiftUI
 
-/// Đường vẽ Oval bắt đầu chuẩn từ 12 giờ (top center) và đi theo chiều kim đồng hồ
-public struct FaceOvalShape: Shape {
-    public init() {}
+/// Mặt nạ cắt lỗ hình Oval trung tâm bằng thuật toán Even-Odd Fill (100% Native, không phụ thuộc shader Metal, không crash)
+public struct FaceMaskHoleShape: Shape {
+    public let ovalWidth: CGFloat
+    public let ovalHeight: CGFloat
+
+    public init(ovalWidth: CGFloat, ovalHeight: CGFloat) {
+        self.ovalWidth = ovalWidth
+        self.ovalHeight = ovalHeight
+    }
 
     public func path(in rect: CGRect) -> Path {
         var path = Path()
         guard rect.width > 1 && rect.height > 1 else { return path }
-        let cx = rect.midX
-        let cy = rect.midY
-        let rx = rect.width / 2.0
-        let ry = rect.height / 2.0
-        
-        let startAngle = -Double.pi / 2.0
-        let endAngle = 3.0 * Double.pi / 2.0
-        let steps = 72
-        
-        path.move(to: CGPoint(x: cx, y: cy - ry))
-        for i in 1...steps {
-            let theta = startAngle + (Double(i) / Double(steps)) * (endAngle - startAngle)
-            let x = cx + rx * cos(theta)
-            let y = cy + ry * sin(theta)
-            path.addLine(to: CGPoint(x: x, y: y))
-        }
+        path.addRect(rect)
+        let ovalRect = CGRect(
+            x: rect.midX - ovalWidth / 2.0,
+            y: rect.midY - ovalHeight / 2.0,
+            width: ovalWidth,
+            height: ovalHeight
+        )
+        path.addEllipse(in: ovalRect)
         return path
     }
 }
@@ -51,20 +49,12 @@ public struct FaceMeshOverlayView: View {
             let isMeasuring = isMeasuringState
 
             ZStack {
-                // 1. Vùng tối xung quanh (Vignette & Mask)
-                Color.black.opacity(0.4)
-                    .mask(
-                        ZStack {
-                            Rectangle()
-                            FaceOvalShape()
-                                .frame(width: ovalWidth, height: ovalHeight)
-                                .blendMode(.destinationOut)
-                        }
-                        .compositingGroup()
-                    )
+                // 1. Vùng tối xung quanh (Vignette & Mask cắt lỗ Oval chuẩn Even-Odd 100% ổn định)
+                FaceMaskHoleShape(ovalWidth: ovalWidth, ovalHeight: ovalHeight)
+                    .fill(Color.black.opacity(0.4), style: FillStyle(eoFill: true))
 
                 // 2. Khung Oval định vị mặt cơ sở
-                FaceOvalShape()
+                Ellipse()
                     .stroke(
                         LinearGradient(
                             colors: isMeasuring 
@@ -81,14 +71,14 @@ public struct FaceMeshOverlayView: View {
                 // 3. Vòng tiến trình đồng tâm KHỚP 100% VỚI KHUNG OVAL
                 if isMeasuring {
                     // Đường ray nền (Track)
-                    FaceOvalShape()
+                    Ellipse()
                         .stroke(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .frame(width: ovalWidth + 12, height: ovalHeight + 12)
 
-                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ
+                    // Vạch tiến trình chạy từ đỉnh (12 giờ) theo chiều kim đồng hồ
                     if progress > 0.005 {
-                        FaceOvalShape()
-                            .trim(from: 0.001, to: min(1.0, max(0.01, CGFloat(progress))))
+                        Ellipse()
+                            .trim(from: 0.0, to: min(1.0, max(0.01, CGFloat(progress))))
                             .stroke(
                                 LinearGradient(
                                     colors: [.cyan, .green, .mint, .cyan],
@@ -98,6 +88,7 @@ public struct FaceMeshOverlayView: View {
                                 style: StrokeStyle(lineWidth: 6, lineCap: .round)
                             )
                             .frame(width: ovalWidth + 12, height: ovalHeight + 12)
+                            .rotationEffect(.degrees(-90))
                             .shadow(color: Color.cyan.opacity(0.9), radius: 8)
                             .animation(.linear(duration: 0.3), value: progress)
                     }

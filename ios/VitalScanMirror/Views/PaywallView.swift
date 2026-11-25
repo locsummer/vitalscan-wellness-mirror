@@ -1,5 +1,4 @@
 import SwiftUI
-import StoreKit
 
 /// Màn hình Đăng ký Gói Nâng cao (In-App Purchase / Paywall)
 public struct PaywallView: View {

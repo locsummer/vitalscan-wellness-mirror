@@ -22,7 +22,19 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private var scanTimer: Timer?
     private let totalScanDuration: Double = 20.0
     private var scanStartTime: Date?
-    private var isActivelyMeasuring = false
+
+    private let measuringLock = NSLock()
+    private var _isActivelyMeasuring: Bool = false
+    public var isActivelyMeasuring: Bool {
+        measuringLock.lock()
+        defer { measuringLock.unlock() }
+        return _isActivelyMeasuring
+    }
+    private func setMeasuringState(_ measuring: Bool) {
+        measuringLock.lock()
+        _isActivelyMeasuring = measuring
+        measuringLock.unlock()
+    }
 
     public init() {
         cameraManager.frameDelegate = self
@@ -46,7 +58,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         scanProgress = 0.0
         remainingSeconds = Int(totalScanDuration)
         scanStartTime = Date()
-        isActivelyMeasuring = true
+        setMeasuringState(true)
         instantBPM = 0.0
         scanState = .measuring(progress: 0.0, currentBPM: 0.0)
 
@@ -62,7 +74,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     public func cancelScanning() {
         scanTimer?.invalidate()
         scanTimer = nil
-        isActivelyMeasuring = false
+        setMeasuringState(false)
         scanProgress = 0.0
         scanState = .faceAligned
     }
@@ -100,7 +112,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private func finishMeasurement() {
         scanTimer?.invalidate()
         scanTimer = nil
-        isActivelyMeasuring = false
+        setMeasuringState(false)
 
         processingQueue.async { [weak self] in
             guard let self = self else { return }
@@ -148,8 +160,9 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         return list
     }
 
-    // MARK: - CameraFrameDelegate (Chạy ngầm thuần túy, KHÔNG dispatch Task MainActor mỗi frame)
+    // MARK: - CameraFrameDelegate (Chạy ngầm thuần túy, chỉ xử lý khi đang trong phiên đo)
     nonisolated public func didCaptureFrame(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
+        guard isActivelyMeasuring else { return }
         if let rgb = faceTracker.extractMeanRGB(from: pixelBuffer) {
             signalProcessor.appendRGB(red: rgb.r, green: rgb.g, blue: rgb.b, timestamp: timestamp)
         }

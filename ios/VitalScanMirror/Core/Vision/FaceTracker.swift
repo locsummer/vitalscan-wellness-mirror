@@ -32,30 +32,35 @@ public final class FaceTracker: @unchecked Sendable {
         var count: Double = 0.0
 
         if isPlanar {
-            // Định dạng camera chuẩn NV12 (YUV 420 BiPlanar)
-            guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return nil }
+            // Định dạng camera chuẩn NV12 (YUV 420 BiPlanar) có kiểm tra biên tối đa từng byte
+            guard CVPixelBufferGetPlaneCount(pixelBuffer) >= 1,
+                  let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return nil }
             let yBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            let yHeight = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+            let yMaxOffset = yBytesPerRow * yHeight
             let yRaw = UnsafeRawPointer(yBase)
 
-            let uvBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)
-            let uvBytesPerRow = uvBase != nil ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1) : 0
+            let hasUV = CVPixelBufferGetPlaneCount(pixelBuffer) >= 2
+            let uvBase = hasUV ? CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) : nil
+            let uvBytesPerRow = hasUV && uvBase != nil ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1) : 0
+            let uvHeight = hasUV && uvBase != nil ? CVPixelBufferGetHeightOfPlane(pixelBuffer, 1) : 0
+            let uvMaxOffset = uvBytesPerRow * uvHeight
             let uvRaw = uvBase != nil ? UnsafeRawPointer(uvBase!) : nil
 
             for rect in sampleRects {
-                let startX = Int(rect.origin.x * Double(width))
-                let endX = Int((rect.origin.x + rect.size.width) * Double(width))
-                let startY = Int(rect.origin.y * Double(height))
-                let endY = Int((rect.origin.y + rect.size.height) * Double(height))
+                let startX = max(0, min(width - 1, Int(rect.origin.x * Double(width))))
+                let endX = max(startX, min(width, Int((rect.origin.x + rect.size.width) * Double(width))))
+                let startY = max(0, min(height - 1, Int(rect.origin.y * Double(height))))
+                let endY = max(startY, min(height, Int((rect.origin.y + rect.size.height) * Double(height))))
 
                 let step = 4
                 for y in stride(from: startY, to: endY, by: step) {
-                    guard y < height else { continue }
                     let yRowOffset = y * yBytesPerRow
                     let uvRowOffset = (y / 2) * uvBytesPerRow
 
                     for x in stride(from: startX, to: endX, by: step) {
-                        guard x < width else { continue }
                         let yOffset = yRowOffset + x
+                        guard yOffset < yMaxOffset else { continue }
                         let yVal = Double(yRaw.load(fromByteOffset: yOffset, as: UInt8.self))
 
                         var rVal = yVal
@@ -64,12 +69,14 @@ public final class FaceTracker: @unchecked Sendable {
 
                         if let uv = uvRaw {
                             let uvOffset = uvRowOffset + (x / 2) * 2
-                            let cb = Double(uv.load(fromByteOffset: uvOffset, as: UInt8.self)) - 128.0
-                            let cr = Double(uv.load(fromByteOffset: uvOffset + 1, as: UInt8.self)) - 128.0
+                            if uvOffset + 1 < uvMaxOffset {
+                                let cb = Double(uv.load(fromByteOffset: uvOffset, as: UInt8.self)) - 128.0
+                                let cr = Double(uv.load(fromByteOffset: uvOffset + 1, as: UInt8.self)) - 128.0
 
-                            rVal = min(max(yVal + 1.402 * cr, 0), 255)
-                            gVal = min(max(yVal - 0.344136 * cb - 0.714136 * cr, 0), 255)
-                            bVal = min(max(yVal + 1.772 * cb, 0), 255)
+                                rVal = min(max(yVal + 1.402 * cr, 0), 255)
+                                gVal = min(max(yVal - 0.344136 * cb - 0.714136 * cr, 0), 255)
+                                bVal = min(max(yVal + 1.772 * cb, 0), 255)
+                            }
                         }
 
                         if yVal > 15 && yVal < 248 {
@@ -82,24 +89,26 @@ public final class FaceTracker: @unchecked Sendable {
                 }
             }
         } else {
-            // Định dạng 32BGRA
+            // Định dạng 32BGRA chuẩn có kiểm tra biên tuyệt đối
             guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
             let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            guard bytesPerRow >= width * 4 else { return nil }
+            let maxOffset = bytesPerRow * height
             let raw = UnsafeRawPointer(baseAddress)
 
             for rect in sampleRects {
-                let startX = Int(rect.origin.x * Double(width))
-                let endX = Int((rect.origin.x + rect.size.width) * Double(width))
-                let startY = Int(rect.origin.y * Double(height))
-                let endY = Int((rect.origin.y + rect.size.height) * Double(height))
+                let startX = max(0, min(width - 1, Int(rect.origin.x * Double(width))))
+                let endX = max(startX, min(width, Int((rect.origin.x + rect.size.width) * Double(width))))
+                let startY = max(0, min(height - 1, Int(rect.origin.y * Double(height))))
+                let endY = max(startY, min(height, Int((rect.origin.y + rect.size.height) * Double(height))))
 
                 let step = 4
                 for y in stride(from: startY, to: endY, by: step) {
-                    guard y < height else { continue }
                     let rowOffset = y * bytesPerRow
                     for x in stride(from: startX, to: endX, by: step) {
-                        guard x < width else { continue }
                         let offset = rowOffset + x * 4
+                        guard offset + 3 < maxOffset else { continue }
+
                         let b = Double(raw.load(fromByteOffset: offset, as: UInt8.self))
                         let g = Double(raw.load(fromByteOffset: offset + 1, as: UInt8.self))
                         let r = Double(raw.load(fromByteOffset: offset + 2, as: UInt8.self))

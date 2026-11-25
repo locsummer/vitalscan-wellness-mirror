@@ -46,34 +46,56 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
 
     private func setupSession() {
         sessionQueue.async { [weak self] in
-            guard let self = self, !self.isSessionConfigured else { return }
-
-            self.session.beginConfiguration()
-            self.session.sessionPreset = .hd1280x720
-
-            // Camera trước
-            if let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
-               let input = try? AVCaptureDeviceInput(device: camera) {
-                if self.session.canAddInput(input) {
-                    self.session.addInput(input)
-                }
-            }
-
-            self.videoOutput.alwaysDiscardsLateVideoFrames = true
-            self.videoOutput.setSampleBufferDelegate(self, queue: self.sampleQueue)
-
-            if self.session.canAddOutput(self.videoOutput) {
-                self.session.addOutput(self.videoOutput)
-            }
-
-            self.session.commitConfiguration()
-            self.isSessionConfigured = true
+            guard let self = self else { return }
+            self.configureSessionInternal()
         }
+    }
+
+    private func configureSessionInternal() {
+        guard !isSessionConfigured else { return }
+
+        session.beginConfiguration()
+        session.sessionPreset = .hd1280x720
+
+        // Camera trước
+        if let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+           let input = try? AVCaptureDeviceInput(device: camera) {
+            if session.canAddInput(input) {
+                session.addInput(input)
+            }
+        }
+
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        // Ép định dạng 32BGRA để bảo đảm tương thích và an toàn bộ nhớ tuyệt đối trên mọi thế hệ iPhone
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+        ]
+        videoOutput.setSampleBufferDelegate(self, queue: sampleQueue)
+
+        if session.canAddOutput(videoOutput) {
+            session.addOutput(videoOutput)
+        }
+
+        if let connection = videoOutput.connection(with: .video) {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+            if connection.isVideoMirroringSupported {
+                connection.isVideoMirrored = true
+            }
+        }
+
+        session.commitConfiguration()
+        isSessionConfigured = true
     }
 
     public func start() {
         sessionQueue.async { [weak self] in
-            guard let self = self, !self.session.isRunning else { return }
+            guard let self = self else { return }
+            if !self.isSessionConfigured {
+                self.configureSessionInternal()
+            }
+            guard !self.session.isRunning else { return }
             self.session.startRunning()
             DispatchQueue.main.async {
                 self.isRunning = true

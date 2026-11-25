@@ -201,35 +201,49 @@ public struct MirrorScanView: View {
     }
 }
 
-/// Wrapper UIKit AVCaptureVideoPreviewLayer cho SwiftUI (An toàn tuyệt đối)
+/// Wrapper UIKit AVCaptureVideoPreviewLayer cho SwiftUI (An toàn tuyệt đối, kiến trúc Sublayer chống vòng lặp layout)
 struct CameraPreviewWrapper: UIViewRepresentable {
     let session: AVCaptureSession
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
-        view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        view.setSession(session)
         return view
     }
 
     func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
-        if uiView.previewLayer.session !== session {
-            uiView.previewLayer.session = session
-        }
+        uiView.setSession(session)
     }
 }
 
 class CameraPreviewUIView: UIView {
-    override class var layerClass: AnyClass {
-        return AVCaptureVideoPreviewLayer.self
+    private let previewLayer = AVCaptureVideoPreviewLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupLayer()
     }
 
-    var previewLayer: AVCaptureVideoPreviewLayer {
-        return layer as! AVCaptureVideoPreviewLayer
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupLayer()
+    }
+
+    private func setupLayer() {
+        backgroundColor = .black
+        previewLayer.videoGravity = .resizeAspectFill
+        layer.addSublayer(previewLayer)
+    }
+
+    func setSession(_ session: AVCaptureSession) {
+        if previewLayer.session !== session {
+            previewLayer.session = session
+        }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Cập nhật frame cho sublayer khớp với bounds của view (Không đụng vào self.layer.frame để tránh đệ quy layout)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         previewLayer.frame = bounds
