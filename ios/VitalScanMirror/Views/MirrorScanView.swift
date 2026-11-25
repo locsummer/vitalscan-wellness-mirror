@@ -1,15 +1,59 @@
 import SwiftUI
 import AVFoundation
 
-/// Màn hình Gương soi Sức khỏe Chính (Main Mirror Scan View)
+/// Định danh Sheet Modal duy nhất tránh xung đột hiển thị
+enum ActiveSheet: Identifiable {
+    case summary(VitalMetrics)
+    case history
+    case paywall
+
+    var id: String {
+        switch self {
+        case .summary: return "summary"
+        case .history: return "history"
+        case .paywall: return "paywall"
+        }
+    }
+}
+
+/// Màn hình Gương soi Sức khỏe Chính (Main Mirror Scan View - Chuẩn Defensive Coding)
 public struct MirrorScanView: View {
     @StateObject private var viewModel = MirrorScanViewModel()
-    @State private var showHistorySheet: Bool = false
-    @State private var showPaywallSheet: Bool = false
+    @State private var activeSheet: ActiveSheet? = nil
 
     public init() {}
 
     public var body: some View {
+        Group {
+            if viewModel.showDisclaimerConsent {
+                MedicalDisclaimerSheet {
+                    viewModel.acceptDisclaimer()
+                }
+            } else {
+                mainMirrorView
+            }
+        }
+        .sheet(item: $activeSheet) { item in
+            switch item {
+            case .summary(let metrics):
+                ScanReportModalView(metrics: metrics) {
+                    activeSheet = nil
+                }
+            case .history:
+                HistoryTrendView()
+            case .paywall:
+                PaywallView()
+            }
+        }
+        .onChange(of: viewModel.showSummaryModal) { show in
+            if show, let metrics = viewModel.latestResult {
+                activeSheet = .summary(metrics)
+                viewModel.showSummaryModal = false
+            }
+        }
+    }
+
+    private var mainMirrorView: some View {
         ZStack {
             // 1. Luồng Camera nền (Live Camera Preview)
             CameraPreviewWrapper(session: viewModel.cameraManager.session)
@@ -27,7 +71,7 @@ public struct MirrorScanView: View {
             VStack {
                 // Top Header Bar
                 HStack {
-                    Button(action: { showHistorySheet = true }) {
+                    Button(action: { activeSheet = .history }) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 20, weight: .bold))
                             .foregroundColor(.white)
@@ -49,7 +93,7 @@ public struct MirrorScanView: View {
 
                     Spacer()
 
-                    Button(action: { showPaywallSheet = true }) {
+                    Button(action: { activeSheet = .paywall }) {
                         Image(systemName: "crown.fill")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(.yellow)
@@ -139,24 +183,6 @@ public struct MirrorScanView: View {
                 }
             }
         }
-        .sheet(isPresented: $viewModel.showDisclaimerConsent) {
-            MedicalDisclaimerSheet {
-                viewModel.acceptDisclaimer()
-            }
-        }
-        .sheet(isPresented: $viewModel.showSummaryModal) {
-            if let metrics = viewModel.latestResult {
-                ScanReportModalView(metrics: metrics) {
-                    viewModel.showSummaryModal = false
-                }
-            }
-        }
-        .sheet(isPresented: $showHistorySheet) {
-            HistoryTrendView()
-        }
-        .sheet(isPresented: $showPaywallSheet) {
-            PaywallView()
-        }
         .onAppear {
             viewModel.cameraManager.start()
         }
@@ -175,7 +201,7 @@ public struct MirrorScanView: View {
     }
 }
 
-/// Wrapper UIKit AVCaptureVideoPreviewLayer cho SwiftUI (Ổn định và an toàn thread)
+/// Wrapper UIKit AVCaptureVideoPreviewLayer cho SwiftUI (An toàn tuyệt đối)
 struct CameraPreviewWrapper: UIViewRepresentable {
     let session: AVCaptureSession
 
@@ -204,6 +230,9 @@ class CameraPreviewUIView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         previewLayer.frame = bounds
+        CATransaction.commit()
     }
 }

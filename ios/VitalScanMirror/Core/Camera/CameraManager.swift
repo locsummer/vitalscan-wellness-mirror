@@ -16,6 +16,7 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
     private let sessionQueue = DispatchQueue(label: "com.vitalscan.cameraQueue")
     private let sampleQueue = DispatchQueue(label: "com.vitalscan.sampleBufferQueue")
     private var videoOutput = AVCaptureVideoDataOutput()
+    private var isSessionConfigured = false
 
     public weak var frameDelegate: CameraFrameDelegate?
 
@@ -45,7 +46,7 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
 
     private func setupSession() {
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self.isSessionConfigured else { return }
 
             self.session.beginConfiguration()
             self.session.sessionPreset = .hd1280x720
@@ -66,6 +67,7 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
             }
 
             self.session.commitConfiguration()
+            self.isSessionConfigured = true
         }
     }
 
