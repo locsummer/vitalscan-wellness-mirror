@@ -3,6 +3,27 @@ import Combine
 import SwiftUI
 import CoreMedia
 
+final class ThreadSafeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Bool = false
+
+    init(_ value: Bool = false) {
+        self.value = value
+    }
+
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ newValue: Bool) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+}
+
 @MainActor
 public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     @Published public var scanState: ScanState = .faceAligned
@@ -23,17 +44,9 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private let totalScanDuration: Double = 20.0
     private var scanStartTime: Date?
 
-    private let measuringLock = NSLock()
-    private var _isActivelyMeasuring: Bool = false
+    private let isMeasuringFlag = ThreadSafeFlag(false)
     public var isActivelyMeasuring: Bool {
-        measuringLock.lock()
-        defer { measuringLock.unlock() }
-        return _isActivelyMeasuring
-    }
-    private func setMeasuringState(_ measuring: Bool) {
-        measuringLock.lock()
-        _isActivelyMeasuring = measuring
-        measuringLock.unlock()
+        return isMeasuringFlag.get()
     }
 
     public init() {
@@ -58,7 +71,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         scanProgress = 0.0
         remainingSeconds = Int(totalScanDuration)
         scanStartTime = Date()
-        setMeasuringState(true)
+        isMeasuringFlag.set(true)
         instantBPM = 0.0
         scanState = .measuring(progress: 0.0, currentBPM: 0.0)
 
@@ -74,7 +87,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     public func cancelScanning() {
         scanTimer?.invalidate()
         scanTimer = nil
-        setMeasuringState(false)
+        isMeasuringFlag.set(false)
         scanProgress = 0.0
         scanState = .faceAligned
     }
@@ -112,7 +125,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private func finishMeasurement() {
         scanTimer?.invalidate()
         scanTimer = nil
-        setMeasuringState(false)
+        isMeasuringFlag.set(false)
 
         processingQueue.async { [weak self] in
             guard let self = self else { return }
@@ -162,7 +175,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
 
     // MARK: - CameraFrameDelegate (Chạy ngầm thuần túy, chỉ xử lý khi đang trong phiên đo)
     nonisolated public func didCaptureFrame(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
-        guard isActivelyMeasuring else { return }
+        guard isMeasuringFlag.get() else { return }
         if let rgb = faceTracker.extractMeanRGB(from: pixelBuffer) {
             signalProcessor.appendRGB(red: rgb.r, green: rgb.g, blue: rgb.b, timestamp: timestamp)
         }
