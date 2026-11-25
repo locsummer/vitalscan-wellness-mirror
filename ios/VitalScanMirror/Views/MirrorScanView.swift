@@ -73,7 +73,7 @@ public struct MirrorScanView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(.red)
-                                    Text("\(Int(viewModel.instantBPM))")
+                                    Text("\(viewModel.instantBPM.safeInt)")
                                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                                         .foregroundColor(.white)
                                     Text("BPM")

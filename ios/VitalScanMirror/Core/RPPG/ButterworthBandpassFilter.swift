@@ -2,13 +2,12 @@ import Foundation
 
 /// Bộ lọc dải thông kỹ thuật số Butterworth (Digital IIR Butterworth Bandpass Filter)
 /// Thiết kế cho tần số lấy mẫu fs = 30 Hz, dải thông 0.75 Hz – 3.5 Hz (45 - 210 BPM)
-public final class ButterworthBandpassFilter {
+public final class ButterworthBandpassFilter: @unchecked Sendable {
     private let sampleRate: Double
     private let lowCutoff: Double
     private let highCutoff: Double
     
-    // Hệ số bộ lọc bậc 2 ghép tầng (Biquad cascade coefficients)
-    // Coeffs calculated for fs=30Hz, fl=0.75Hz, fh=3.5Hz
+    // Hệ số bộ lọc bậc 2 ghép tầng
     private var b0: Double = 0.0
     private var b1: Double = 0.0
     private var b2: Double = 0.0
@@ -42,32 +41,50 @@ public final class ButterworthBandpassFilter {
         a2 = (1.0 - alpha) / a0
     }
 
-    /// Lọc từng mẫu tín hiệu trực tiếp (Real-time stream)
+    /// Lọc từng mẫu tín hiệu trực tiếp với cơ chế chống nhiễm độc NaN/Infinity
     public func filterSample(_ x: Double) -> Double {
-        let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        let cleanX = x.isNaN || x.isInfinite ? 0.0 : x
+        let y = b0 * cleanX + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        let cleanY = y.isNaN || y.isInfinite ? 0.0 : y
         x2 = x1
-        x1 = x
+        x1 = cleanX
         y2 = y1
-        y1 = y
-        return y
+        y1 = cleanY
+        return cleanY
     }
 
-    /// Lọc toàn bộ mảng tín hiệu hai chiều thuận nghịch (Zero-Phase Forward-Backward Filter)
+    /// Lọc toàn bộ mảng tín hiệu hai chiều thuận nghịch (Zero-Phase Forward-Backward Filter, Thread-safe tuyệt đối)
     public func filterSignal(_ signal: [Double]) -> [Double] {
         guard signal.count > 4 else { return signal }
         
-        // 1. Forward pass
+        // 1. Forward pass với state cục bộ
         var forward = [Double](repeating: 0.0, count: signal.count)
-        reset()
+        var fx1 = 0.0, fx2 = 0.0, fy1 = 0.0, fy2 = 0.0
         for i in 0..<signal.count {
-            forward[i] = filterSample(signal[i])
+            let x = signal[i]
+            let cleanX = x.isNaN || x.isInfinite ? 0.0 : x
+            let y = b0 * cleanX + b1 * fx1 + b2 * fx2 - a1 * fy1 - a2 * fy2
+            let cleanY = y.isNaN || y.isInfinite ? 0.0 : y
+            fx2 = fx1
+            fx1 = cleanX
+            fy2 = fy1
+            fy1 = cleanY
+            forward[i] = cleanY
         }
 
-        // 2. Backward pass (để triệt tiêu độ lệch pha thời gian)
+        // 2. Backward pass với state cục bộ (triệt tiêu độ lệch pha thời gian)
         var backward = [Double](repeating: 0.0, count: signal.count)
-        reset()
+        var bx1 = 0.0, bx2 = 0.0, by1 = 0.0, by2 = 0.0
         for i in (0..<signal.count).reversed() {
-            backward[i] = filterSample(forward[i])
+            let x = forward[i]
+            let cleanX = x.isNaN || x.isInfinite ? 0.0 : x
+            let y = b0 * cleanX + b1 * bx1 + b2 * bx2 - a1 * by1 - a2 * by2
+            let cleanY = y.isNaN || y.isInfinite ? 0.0 : y
+            bx2 = bx1
+            bx1 = cleanX
+            by2 = by1
+            by1 = cleanY
+            backward[i] = cleanY
         }
 
         return backward

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ScanHistoryItem: Identifiable, Codable {
+public struct ScanHistoryItem: Identifiable, Codable, Sendable {
     public let id: UUID
     public let date: Date
     public let heartRate: Double

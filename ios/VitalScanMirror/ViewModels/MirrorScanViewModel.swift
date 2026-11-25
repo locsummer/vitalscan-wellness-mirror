@@ -18,6 +18,7 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     public let cameraManager = CameraManager()
     private let faceTracker = FaceTracker()
     private let signalProcessor = SignalProcessor()
+    private let processingQueue = DispatchQueue(label: "com.vitalscan.processingQueue", qos: .userInitiated)
 
     private var scanTimer: Timer?
     private let totalScanDuration: Double = 20.0 // Quét trong 20 giây
@@ -25,9 +26,12 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private var isActivelyMeasuring = false
     private var consecutiveMissedFaceFrames = 0
 
+    // Bộ đệm cho delegate chạy ngầm
+    private var sampleCounter = 0
+    private var lastValidROI: FaceROI?
+
     public init() {
         cameraManager.frameDelegate = self
-        // Kiểm tra xem người dùng đã đồng ý với disclaimer y tế chưa
         let hasAgreed = UserDefaults.standard.bool(forKey: "vitalscan_disclaimer_agreed")
         if !hasAgreed {
             self.showDisclaimerConsent = true
@@ -64,35 +68,40 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         guard !isActivelyMeasuring else { return }
         isActivelyMeasuring = true
         scanStartTime = Date()
-        cameraManager.lockCameraParameters(true) // Khóa phơi sáng và cân bằng trắng
+        cameraManager.lockCameraParameters(true)
 
         scanTimer?.invalidate()
         scanTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            Task { @MainActor in
-                self.updateMeasurementProgress()
-            }
+            self.updateMeasurementProgress()
         }
     }
 
     private func updateMeasurementProgress() {
         guard let start = scanStartTime else { return }
         let elapsed = Date().timeIntervalSince(start)
-        let progress = min(elapsed / totalScanDuration, 1.0)
+        let progress = min(max(elapsed / totalScanDuration, 0.0), 1.0)
         self.scanProgress = progress
         self.remainingSeconds = max(0, Int(totalScanDuration - elapsed))
 
-        // Cập nhật biểu đồ sóng thời gian thực
-        self.liveWaveform = self.signalProcessor.getLatestFilteredWaveform(count: 60)
+        // Chạy thuật toán nặng ngầm trên processingQueue, KHÔNG chặn giao diện chính
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            let wave = self.signalProcessor.getLatestFilteredWaveform(count: 60)
+            let metrics = self.signalProcessor.computeVitalMetrics()
 
-        // Tính thử nghiệm nhịp tim tạm thời
-        if let currentMetrics = self.signalProcessor.computeVitalMetrics() {
-            self.instantBPM = currentMetrics.heartRateBPM
-            self.scanState = .measuring(progress: progress, currentBPM: self.instantBPM)
-        }
-
-        if progress >= 1.0 {
-            finishMeasurement()
+            DispatchQueue.main.async {
+                if !wave.isEmpty {
+                    self.liveWaveform = wave
+                }
+                if let currentMetrics = metrics {
+                    self.instantBPM = currentMetrics.heartRateBPM
+                    self.scanState = .measuring(progress: progress, currentBPM: self.instantBPM)
+                }
+                if progress >= 1.0 {
+                    self.finishMeasurement()
+                }
+            }
         }
     }
 
@@ -102,14 +111,20 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         isActivelyMeasuring = false
         cameraManager.lockCameraParameters(false)
 
-        if let finalMetrics = signalProcessor.computeVitalMetrics() {
-            self.latestResult = finalMetrics
-            self.scanState = .completed(finalMetrics)
-            self.showSummaryModal = true
-            // Lưu vào lịch sử
-            saveScanRecord(finalMetrics)
-        } else {
-            self.scanState = .failed(reason: "Tín hiệu không đủ rõ ràng. Vui lòng giữ yên khuôn mặt và đảm bảo đủ ánh sáng.")
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            let finalMetrics = self.signalProcessor.computeVitalMetrics()
+
+            DispatchQueue.main.async {
+                if let metrics = finalMetrics {
+                    self.latestResult = metrics
+                    self.scanState = .completed(metrics)
+                    self.showSummaryModal = true
+                    self.saveScanRecord(metrics)
+                } else {
+                    self.scanState = .failed(reason: "Tín hiệu không đủ rõ ràng. Vui lòng giữ yên khuôn mặt và đảm bảo đủ ánh sáng.")
+                }
+            }
         }
     }
 
@@ -137,14 +152,13 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         return list
     }
 
-    // MARK: - CameraFrameDelegate
+    // MARK: - CameraFrameDelegate (Chạy ngầm trên cameraQueue)
     nonisolated public func didCaptureFrame(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
         // Nhận diện khuôn mặt
         guard let roi = faceTracker.detectFaceROI(in: pixelBuffer) else {
             Task { @MainActor in
                 if self.isActivelyMeasuring {
                     self.consecutiveMissedFaceFrames += 1
-                    // Chỉ hủy và báo lỗi nếu mất dấu liên tục trên 30 frames (~1 giây)
                     if self.consecutiveMissedFaceFrames > 30 {
                         self.scanState = .failed(reason: "Mất dấu khuôn mặt. Vui lòng nhìn thẳng vào gương.")
                         self.cancelScanning()

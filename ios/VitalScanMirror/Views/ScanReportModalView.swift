@@ -51,7 +51,7 @@ public struct ScanReportModalView: View {
                             icon: "heart.fill",
                             iconColor: .red,
                             title: "Nhịp tim",
-                            value: "\(Int(metrics.heartRateBPM))",
+                            value: "\(metrics.heartRateBPM.safeInt)",
                             unit: "BPM",
                             status: hrStatusText
                         )
@@ -60,7 +60,7 @@ public struct ScanReportModalView: View {
                             icon: "waveform.path.ecg",
                             iconColor: .purple,
                             title: "Biến thiên HRV",
-                            value: "\(Int(metrics.hrvRMSSD))",
+                            value: "\(metrics.hrvRMSSD.safeInt)",
                             unit: "ms (RMSSD)",
                             status: hrvStatusText
                         )
@@ -69,7 +69,7 @@ public struct ScanReportModalView: View {
                             icon: "wind",
                             iconColor: .cyan,
                             title: "Nhịp thở",
-                            value: "\(Int(metrics.respirationRateBPM))",
+                            value: "\(metrics.respirationRateBPM.safeInt)",
                             unit: "lần/phút",
                             status: "Bình thường"
                         )
@@ -78,7 +78,7 @@ public struct ScanReportModalView: View {
                             icon: "brain.head.profile",
                             iconColor: .orange,
                             title: "Mức Căng thẳng",
-                            value: "\(Int(metrics.stressIndex))",
+                            value: "\(metrics.stressIndex.safeInt)",
                             unit: "/ 100",
                             status: stressStatusText
                         )
@@ -119,7 +119,7 @@ public struct ScanReportModalView: View {
                     .rotationEffect(.degrees(-90))
 
                 VStack(spacing: 0) {
-                    Text("\(Int(metrics.skinVitalityScore))")
+                    Text("\(metrics.skinVitalityScore.safeInt)")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     Text("ĐIỂM")

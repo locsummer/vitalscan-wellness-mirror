@@ -230,7 +230,7 @@ public struct FaceMeshOverlayView: View {
         case .calibrating:
             return "Đang hiệu chuẩn độ sáng da..."
         case .measuring(_, let bpm):
-            return "Đang quét mạch rPPG (\(remainingSeconds)s) • \(Int(bpm)) BPM"
+            return "Đang quét mạch rPPG (\(remainingSeconds)s) • \(bpm.safeInt) BPM"
         case .completed:
             return "Quét hoàn tất!"
         case .failed(let reason):

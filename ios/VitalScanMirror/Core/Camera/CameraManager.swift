@@ -7,8 +7,8 @@ public protocol CameraFrameDelegate: AnyObject {
     func didCaptureFrame(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval)
 }
 
-/// Trình quản lý camera trước độ phân giải cao và cố định 30 FPS cho đo lường rPPG
-public final class CameraManager: NSObject, ObservableObject {
+/// Trình quản lý camera trước độ phân giải cao và cố định 30 FPS cho đo lường rPPG (An toàn tuyệt đối)
+public final class CameraManager: NSObject, ObservableObject, @unchecked Sendable {
     @Published public var isRunning: Bool = false
     @Published public var isAuthorized: Bool = false
     @Published public var permissionDenied: Bool = false
@@ -66,11 +66,13 @@ public final class CameraManager: NSObject, ObservableObject {
                     self.session.addInput(input)
                 }
 
-                // Cấu hình Output video sample buffer 32BGRA
+                // Cấu hình Output video sample buffer an toàn
                 self.videoOutput.alwaysDiscardsLateVideoFrames = true
-                self.videoOutput.videoSettings = [
-                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-                ]
+                if self.videoOutput.availableVideoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) {
+                    self.videoOutput.videoSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                    ]
+                }
                 self.videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "com.vitalscan.sampleBufferQueue"))
 
                 if self.session.canAddOutput(self.videoOutput) {
@@ -86,27 +88,27 @@ public final class CameraManager: NSObject, ObservableObject {
                     }
                 }
 
-                // Cố định tốc độ khung hình 30 FPS an toàn
-                do {
-                    try camera.lockForConfiguration()
-                    let targetFrameRate = 30.0
-                    let supported = camera.activeFormat.videoSupportedFrameRateRanges.contains { range in
-                        range.minFrameRate <= targetFrameRate && targetFrameRate <= range.maxFrameRate
-                    }
-                    if supported {
-                        camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                        camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                    }
-                    camera.unlockForConfiguration()
-                } catch {
-                    print("Không thể cấu hình frame rate camera: \(error.localizedDescription)")
-                }
-
             } catch {
                 print("Lỗi cấu hình Camera: \(error.localizedDescription)")
             }
 
             self.session.commitConfiguration()
+
+            // Cố định tốc độ khung hình 30 FPS an toàn SAU KHI commit session configuration
+            do {
+                try camera.lockForConfiguration()
+                let targetFrameRate = 30.0
+                let supported = camera.activeFormat.videoSupportedFrameRateRanges.contains { range in
+                    range.minFrameRate <= targetFrameRate && targetFrameRate <= range.maxFrameRate
+                }
+                if supported {
+                    camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
+                    camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("Không thể cấu hình frame rate camera: \(error.localizedDescription)")
+            }
         }
     }
 

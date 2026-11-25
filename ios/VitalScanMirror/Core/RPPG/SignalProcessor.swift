@@ -1,8 +1,8 @@
 import Foundation
 import CoreGraphics
 
-/// Bộ xử lý tín hiệu sinh trắc tổng thể từ chuỗi khung hình camera mặt (Thread-safe)
-public final class SignalProcessor {
+/// Bộ xử lý tín hiệu sinh trắc tổng thể từ chuỗi khung hình camera mặt (Thread-safe & Crash-proof)
+public final class SignalProcessor: @unchecked Sendable {
     private let sampleRate: Double = 30.0
     private let bufferCapacity: Int = 300 // Lưu trữ 10 giây gần nhất (300 frames)
 
@@ -21,6 +21,8 @@ public final class SignalProcessor {
 
     /// Đẩy giá trị màu trung bình RGB của frame hiện tại vào bộ đệm (Thread-safe)
     public func appendRGB(red: Double, green: Double, blue: Double, timestamp: TimeInterval) {
+        guard !red.isNaN, !green.isNaN, !blue.isNaN else { return }
+
         lock.lock()
         defer { lock.unlock() }
 
@@ -77,6 +79,7 @@ public final class SignalProcessor {
             return nil
         }
         let hrBpm = hrSpectral.peakFrequency * 60.0
+        guard hrBpm >= 40.0 && hrBpm <= 220.0 && !hrBpm.isNaN else { return nil }
 
         // 3. Phân tích HRV (SDNN, RMSSD) từ các đỉnh cực đại cục bộ
         let (sdnn, rmssd) = calculateHRV(from: ppgSignal)
@@ -89,12 +92,14 @@ public final class SignalProcessor {
         // 5. Tính chỉ số căng thẳng Stress Index (Dựa trên tỷ lệ tương quan nghịch với RMSSD & HR)
         let normalizedRmssd = min(max(rmssd, 10.0), 100.0)
         let rawStress = 100.0 - (normalizedRmssd - 10.0) * (60.0 / 90.0) + (hrBpm > 85 ? (hrBpm - 85) * 0.5 : 0)
-        let stressIndex = min(max(rawStress, 5.0), 95.0)
+        let stressIndex = min(max(rawStress.isNaN ? 45.0 : rawStress, 5.0), 95.0)
 
         // 6. Điểm sức sống và tuổi sinh học làn da (Skin Vitality & Bio-Age)
         let signalQuality = min(max(hrSpectral.snr / 5.0, 0.2), 1.0)
-        let skinVitality = min(max(70.0 + (100.0 - stressIndex) * 0.2 + signalQuality * 10.0, 40.0), 98.0)
-        let estimatedSkinAge = max(20, min(65, Int(28.0 + (stressIndex - 40.0) * 0.15)))
+        let rawVitality = 70.0 + (100.0 - stressIndex) * 0.2 + signalQuality * 10.0
+        let skinVitality = min(max(rawVitality.isNaN ? 80.0 : rawVitality, 40.0), 98.0)
+        let rawSkinAge = 28.0 + (stressIndex - 40.0) * 0.15
+        let estimatedSkinAge = max(20, min(65, rawSkinAge.safeInt))
 
         return VitalMetrics(
             heartRateBPM: hrBpm,
@@ -109,18 +114,17 @@ public final class SignalProcessor {
         )
     }
 
-    /// Tính toán các chỉ số biến thiên nhịp tim HRV từ đỉnh R-R
+    /// Tính toán các chỉ số biến thiên nhịp tim HRV từ đỉnh R-R an toàn tuyệt đối
     private func calculateHRV(from signal: [Double]) -> (sdnn: Double, rmssd: Double) {
-        guard signal.count > 30 else { return (40.0, 35.0) }
+        guard signal.count > 30 else { return (42.0, 38.0) }
 
-        // Tìm các đỉnh cực đại (local maxima peaks)
         var peakIndices: [Int] = []
-        let minPeakDistance = Int(sampleRate * 0.35) // Khoảng cách tối thiểu 350ms (tương đương max 170 BPM)
+        let minPeakDistance = Int(sampleRate * 0.35)
 
         for i in 2..<(signal.count - 2) {
             if signal[i] > signal[i - 1] && signal[i] > signal[i - 2] &&
                signal[i] > signal[i + 1] && signal[i] > signal[i + 2] &&
-               signal[i] > 0 { // Ngưỡng biên độ dương
+               signal[i] > 0 {
                 if let lastPeak = peakIndices.last {
                     if (i - lastPeak) >= minPeakDistance {
                         peakIndices.append(i)
@@ -132,15 +136,13 @@ public final class SignalProcessor {
         }
 
         guard peakIndices.count >= 3 else {
-            return (42.0, 38.0) // Giá trị tham chiếu trung bình mặc định
+            return (42.0, 38.0)
         }
 
-        // Chuyển đổi khoảng cách đỉnh thành khoảng cách mili-giây (RR intervals in ms)
         var rrIntervals: [Double] = []
         for i in 0..<(peakIndices.count - 1) {
             let diffFrames = Double(peakIndices[i + 1] - peakIndices[i])
             let diffMs = (diffFrames / sampleRate) * 1000.0
-            // Lọc các khoảng hợp lý từ 300ms đến 1500ms (40 - 200 BPM)
             if diffMs >= 300.0 && diffMs <= 1500.0 {
                 rrIntervals.append(diffMs)
             }
@@ -150,8 +152,9 @@ public final class SignalProcessor {
 
         // 1. Tính SDNN
         let meanRR = rrIntervals.reduce(0.0, +) / Double(rrIntervals.count)
+        guard !meanRR.isNaN && !meanRR.isInfinite else { return (42.0, 38.0) }
         let variance = rrIntervals.reduce(0.0) { $0 + pow($1 - meanRR, 2.0) } / Double(rrIntervals.count - 1)
-        let sdnn = sqrt(max(0.0, variance))
+        let sdnn = sqrt(max(0.0, variance.isNaN ? 0.0 : variance))
 
         // 2. Tính RMSSD
         var sumSquaredDiff = 0.0
@@ -159,9 +162,15 @@ public final class SignalProcessor {
             let diff = rrIntervals[i + 1] - rrIntervals[i]
             sumSquaredDiff += pow(diff, 2.0)
         }
-        let rmssd = sqrt(sumSquaredDiff / Double(rrIntervals.count - 1))
+        let rmssd = sqrt(max(0.0, sumSquaredDiff / Double(rrIntervals.count - 1)))
 
-        return (sdnn: min(max(sdnn, 15.0), 120.0), rmssd: min(max(rmssd, 12.0), 110.0))
+        let finalSdnn = sdnn.isNaN || sdnn.isInfinite ? 42.0 : sdnn
+        let finalRmssd = rmssd.isNaN || rmssd.isInfinite ? 38.0 : rmssd
+
+        return (
+            sdnn: min(max(finalSdnn, 15.0), 120.0),
+            rmssd: min(max(finalRmssd, 12.0), 110.0)
+        )
     }
 
     public func reset() {

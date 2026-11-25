@@ -2,7 +2,7 @@ import Foundation
 import Accelerate
 
 /// Phân tích phổ tần số bằng Biến đổi Fourier Nhanh (FFT) sử dụng Apple Accelerate Framework vDSP (100% Safe Memory)
-public final class FFTAnalyzer {
+public final class FFTAnalyzer: @unchecked Sendable {
     private let sampleRate: Double
 
     public init(sampleRate: Double = 30.0) {

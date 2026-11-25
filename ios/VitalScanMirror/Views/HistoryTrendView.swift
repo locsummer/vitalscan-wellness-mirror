@@ -62,9 +62,9 @@ public struct HistoryTrendView: View {
 
     private var summaryAveragesHeader: some View {
         HStack(spacing: 12) {
-            averageStatBox(title: "Trung bình HR", value: "\(Int(viewModel.averageHR))", unit: "BPM", color: .red)
-            averageStatBox(title: "Trung bình HRV", value: "\(Int(viewModel.averageHRV))", unit: "ms", color: .purple)
-            averageStatBox(title: "Chỉ số Stress", value: "\(Int(viewModel.averageStress))", unit: "/100", color: .orange)
+            averageStatBox(title: "Trung bình HR", value: "\(viewModel.averageHR.safeInt)", unit: "BPM", color: .red)
+            averageStatBox(title: "Trung bình HRV", value: "\(viewModel.averageHRV.safeInt)", unit: "ms", color: .purple)
+            averageStatBox(title: "Chỉ số Stress", value: "\(viewModel.averageStress.safeInt)", unit: "/100", color: .orange)
         }
     }
 
@@ -107,7 +107,7 @@ public struct HistoryTrendView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     HStack(spacing: 3) {
                         Image(systemName: "heart.fill").font(.system(size: 10)).foregroundColor(.red)
-                        Text("\(Int(item.heartRate))").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
+                        Text("\(item.heartRate.safeInt)").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
                     }
                     Text("BPM").font(.system(size: 9)).foregroundColor(.gray)
                 }
