@@ -26,10 +26,6 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
     private var isActivelyMeasuring = false
     private var consecutiveMissedFaceFrames = 0
 
-    // Bộ đệm cho delegate chạy ngầm
-    private var sampleCounter = 0
-    private var lastValidROI: FaceROI?
-
     public init() {
         cameraManager.frameDelegate = self
         let hasAgreed = UserDefaults.standard.bool(forKey: "vitalscan_disclaimer_agreed")
@@ -45,30 +41,18 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         scanState = .searchingFace
     }
 
+    /// Người dùng nhấn nút BẮT ĐẦU QUÉT SINH TRẮC
     public func startScanning() {
+        guard !isActivelyMeasuring else { return }
         signalProcessor.reset()
         consecutiveMissedFaceFrames = 0
         scanProgress = 0.0
         remainingSeconds = Int(totalScanDuration)
-        scanState = .searchingFace
-        cameraManager.start()
-        cameraManager.lockCameraParameters(false)
-    }
-
-    public func cancelScanning() {
-        scanTimer?.invalidate()
-        scanTimer = nil
-        isActivelyMeasuring = false
-        consecutiveMissedFaceFrames = 0
-        cameraManager.lockCameraParameters(false)
-        scanState = .idle
-    }
-
-    private func beginMeasurement() {
-        guard !isActivelyMeasuring else { return }
-        isActivelyMeasuring = true
         scanStartTime = Date()
-        cameraManager.lockCameraParameters(true)
+        isActivelyMeasuring = true
+        scanState = .measuring(progress: 0.0, currentBPM: 0.0)
+
+        cameraManager.start()
 
         scanTimer?.invalidate()
         scanTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -77,27 +61,38 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         }
     }
 
+    public func cancelScanning() {
+        scanTimer?.invalidate()
+        scanTimer = nil
+        isActivelyMeasuring = false
+        consecutiveMissedFaceFrames = 0
+        scanProgress = 0.0
+        scanState = currentFaceROI?.isFaceWellCentered == true ? .faceAligned : .searchingFace
+    }
+
     private func updateMeasurementProgress() {
-        guard let start = scanStartTime else { return }
+        guard isActivelyMeasuring, let start = scanStartTime else { return }
         let elapsed = Date().timeIntervalSince(start)
         let progress = min(max(elapsed / totalScanDuration, 0.0), 1.0)
         self.scanProgress = progress
         self.remainingSeconds = max(0, Int(totalScanDuration - elapsed))
 
-        // Chạy thuật toán nặng ngầm trên processingQueue, KHÔNG chặn giao diện chính
+        // Chạy thuật toán rPPG ngầm trên processingQueue, không bao giờ chặn Main UI
         processingQueue.async { [weak self] in
             guard let self = self else { return }
             let wave = self.signalProcessor.getLatestFilteredWaveform(count: 60)
             let metrics = self.signalProcessor.computeVitalMetrics()
 
             DispatchQueue.main.async {
+                guard self.isActivelyMeasuring else { return }
                 if !wave.isEmpty {
                     self.liveWaveform = wave
                 }
                 if let currentMetrics = metrics {
                     self.instantBPM = currentMetrics.heartRateBPM
-                    self.scanState = .measuring(progress: progress, currentBPM: self.instantBPM)
                 }
+                self.scanState = .measuring(progress: progress, currentBPM: self.instantBPM)
+
                 if progress >= 1.0 {
                     self.finishMeasurement()
                 }
@@ -109,7 +104,6 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         scanTimer?.invalidate()
         scanTimer = nil
         isActivelyMeasuring = false
-        cameraManager.lockCameraParameters(false)
 
         processingQueue.async { [weak self] in
             guard let self = self else { return }
@@ -152,14 +146,14 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         return list
     }
 
-    // MARK: - CameraFrameDelegate (Chạy ngầm trên cameraQueue)
+    // MARK: - CameraFrameDelegate (Chạy ngầm trên sampleQueue)
     nonisolated public func didCaptureFrame(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
-        // Nhận diện khuôn mặt
+        // Nhận diện khuôn mặt với autoreleasepool
         guard let roi = faceTracker.detectFaceROI(in: pixelBuffer) else {
             Task { @MainActor in
                 if self.isActivelyMeasuring {
                     self.consecutiveMissedFaceFrames += 1
-                    if self.consecutiveMissedFaceFrames > 30 {
+                    if self.consecutiveMissedFaceFrames > 45 {
                         self.scanState = .failed(reason: "Mất dấu khuôn mặt. Vui lòng nhìn thẳng vào gương.")
                         self.cancelScanning()
                     }
@@ -174,9 +168,8 @@ public final class MirrorScanViewModel: ObservableObject, CameraFrameDelegate {
         Task { @MainActor in
             self.consecutiveMissedFaceFrames = 0
             self.currentFaceROI = roi
-            if !self.isActivelyMeasuring && roi.isFaceWellCentered {
-                self.scanState = .faceAligned
-                self.beginMeasurement()
+            if !self.isActivelyMeasuring {
+                self.scanState = roi.isFaceWellCentered ? .faceAligned : .searchingFace
             }
         }
 

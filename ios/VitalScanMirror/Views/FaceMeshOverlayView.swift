@@ -14,7 +14,7 @@ public struct FaceOvalShape: Shape {
         
         let startAngle = -Double.pi / 2.0
         let endAngle = 3.0 * Double.pi / 2.0
-        let steps = 144
+        let steps = 72
         
         path.move(to: CGPoint(x: cx, y: cy - ry))
         for i in 1...steps {
@@ -23,7 +23,6 @@ public struct FaceOvalShape: Shape {
             let y = cy + ry * sin(theta)
             path.addLine(to: CGPoint(x: x, y: y))
         }
-        path.closeSubpath()
         return path
     }
 }
@@ -71,37 +70,39 @@ public struct FaceMeshOverlayView: View {
                     .stroke(
                         LinearGradient(
                             colors: isMeasuring 
-                                ? [Color.cyan.opacity(0.6), Color.green.opacity(0.4), Color.cyan.opacity(0.6)]
-                                : [Color.white.opacity(0.5), Color.cyan.opacity(0.3)],
+                                ? [Color.cyan.opacity(0.8), Color.green.opacity(0.6), Color.cyan.opacity(0.8)]
+                                : (scanState == .faceAligned ? [Color.green, Color.mint] : [Color.white.opacity(0.5), Color.cyan.opacity(0.3)]),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        style: StrokeStyle(lineWidth: isMeasuring ? 2.5 : 2.0)
+                        style: StrokeStyle(lineWidth: isMeasuring ? 3.0 : (scanState == .faceAligned ? 2.5 : 2.0))
                     )
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.6) : Color.white.opacity(0.15), radius: 8)
+                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.6) : (scanState == .faceAligned ? Color.green.opacity(0.4) : Color.white.opacity(0.15)), radius: 8)
 
-                // 3. Vòng tiến trình tròn bao quanh KHỚP 100% VỚI KHUNG (Concentric Progress Ring)
+                // 3. Vòng tiến trình đồng tâm KHỚP 100% VỚI KHUNG OVAL
                 if isMeasuring {
                     // Đường ray nền (Track)
                     FaceOvalShape()
-                        .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .stroke(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .frame(width: ovalWidth + 12, height: ovalHeight + 12)
 
-                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ
-                    FaceOvalShape()
-                        .trim(from: 0.0, to: CGFloat(progress))
-                        .stroke(
-                            LinearGradient(
-                                colors: [.cyan, .green, .mint, .cyan],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
-                        )
-                        .frame(width: ovalWidth + 12, height: ovalHeight + 12)
-                        .shadow(color: Color.cyan.opacity(0.9), radius: 8)
-                        .animation(.linear(duration: 0.3), value: progress)
+                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ (Tránh slice rỗng khi progress = 0)
+                    if progress > 0.005 {
+                        FaceOvalShape()
+                            .trim(from: 0.001, to: min(1.0, max(0.01, CGFloat(progress))))
+                            .stroke(
+                                LinearGradient(
+                                    colors: [.cyan, .green, .mint, .cyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                            )
+                            .frame(width: ovalWidth + 12, height: ovalHeight + 12)
+                            .shadow(color: Color.cyan.opacity(0.9), radius: 8)
+                            .animation(.linear(duration: 0.3), value: progress)
+                    }
 
                     // Badge hiển thị % tiến trình phía trên khung
                     Text("\(progress.isNaN ? 0 : Int(progress * 100))%")
@@ -169,7 +170,7 @@ public struct FaceMeshOverlayView: View {
 
     private var isMeasuringState: Bool {
         switch scanState {
-        case .measuring, .calibrating, .faceAligned:
+        case .measuring, .calibrating:
             return true
         default:
             return false
@@ -208,7 +209,9 @@ public struct FaceMeshOverlayView: View {
             return .gray
         case .searchingFace:
             return .yellow
-        case .faceAligned, .calibrating:
+        case .faceAligned:
+            return .green
+        case .calibrating:
             return .cyan
         case .measuring:
             return .green
@@ -226,7 +229,7 @@ public struct FaceMeshOverlayView: View {
         case .searchingFace:
             return "Đang tìm khuôn mặt... Nhìn thẳng vào camera"
         case .faceAligned:
-            return "Đã phát hiện! Giữ yên để hiệu chuẩn"
+            return "Đã khớp khuôn mặt! Nhấn nút Bắt đầu quét"
         case .calibrating:
             return "Đang hiệu chuẩn độ sáng da..."
         case .measuring(_, let bpm):

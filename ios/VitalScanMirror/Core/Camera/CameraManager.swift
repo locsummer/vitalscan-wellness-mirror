@@ -15,6 +15,7 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
 
     public let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.vitalscan.cameraQueue")
+    private let sampleQueue = DispatchQueue(label: "com.vitalscan.sampleBufferQueue")
     private var frontCamera: AVCaptureDevice?
     private var videoOutput = AVCaptureVideoDataOutput()
 
@@ -68,12 +69,7 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
 
                 // Cấu hình Output video sample buffer an toàn
                 self.videoOutput.alwaysDiscardsLateVideoFrames = true
-                if self.videoOutput.availableVideoPixelFormatTypes.contains(kCVPixelFormatType_32BGRA) {
-                    self.videoOutput.videoSettings = [
-                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-                    ]
-                }
-                self.videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "com.vitalscan.sampleBufferQueue"))
+                self.videoOutput.setSampleBufferDelegate(self, queue: self.sampleQueue)
 
                 if self.session.canAddOutput(self.videoOutput) {
                     self.session.addOutput(self.videoOutput)
@@ -93,22 +89,6 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
             }
 
             self.session.commitConfiguration()
-
-            // Cố định tốc độ khung hình 30 FPS an toàn SAU KHI commit session configuration
-            do {
-                try camera.lockForConfiguration()
-                let targetFrameRate = 30.0
-                let supported = camera.activeFormat.videoSupportedFrameRateRanges.contains { range in
-                    range.minFrameRate <= targetFrameRate && targetFrameRate <= range.maxFrameRate
-                }
-                if supported {
-                    camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                    camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFrameRate))
-                }
-                camera.unlockForConfiguration()
-            } catch {
-                print("Không thể cấu hình frame rate camera: \(error.localizedDescription)")
-            }
         }
     }
 
@@ -132,32 +112,9 @@ public final class CameraManager: NSObject, ObservableObject, @unchecked Sendabl
         }
     }
 
-    /// Khóa Auto-Exposure và Auto-White Balance khi bắt đầu đo để tránh hiện tượng nhấp nháy cảm biến
+    /// Giữ hàm an toàn (No-op) để tương thích interface mà không can thiệp phần cứng gây crash
     public func lockCameraParameters(_ lock: Bool) {
-        sessionQueue.async { [weak self] in
-            guard let camera = self?.frontCamera else { return }
-            do {
-                try camera.lockForConfiguration()
-                if lock {
-                    if camera.isExposureModeSupported(.locked) {
-                        camera.exposureMode = .locked
-                    }
-                    if camera.isWhiteBalanceModeSupported(.locked) {
-                        camera.whiteBalanceMode = .locked
-                    }
-                } else {
-                    if camera.isExposureModeSupported(.continuousAutoExposure) {
-                        camera.exposureMode = .continuousAutoExposure
-                    }
-                    if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
-                        camera.whiteBalanceMode = .continuousAutoWhiteBalance
-                    }
-                }
-                camera.unlockForConfiguration()
-            } catch {
-                print("Không thể khóa thông số camera: \(error.localizedDescription)")
-            }
-        }
+        // No-op: Thuật toán POS triệt tiêu chênh lệch sáng toán học, không cần khóa phần cứng
     }
 }
 

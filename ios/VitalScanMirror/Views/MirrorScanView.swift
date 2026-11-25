@@ -168,7 +168,7 @@ public struct MirrorScanView: View {
 
     private var isMeasuring: Bool {
         switch viewModel.scanState {
-        case .measuring, .calibrating, .faceAligned:
+        case .measuring, .calibrating:
             return true
         default:
             return false
