@@ -19,7 +19,6 @@ public struct MirrorScanView: View {
             FaceMeshOverlayView(
                 scanState: viewModel.scanState,
                 progress: viewModel.scanProgress,
-                roi: viewModel.currentFaceROI,
                 remainingSeconds: viewModel.remainingSeconds
             )
             .ignoresSafeArea()
@@ -205,14 +204,6 @@ class CameraPreviewUIView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let connection = previewLayer.connection {
-            if connection.isVideoOrientationSupported && connection.videoOrientation != .portrait {
-                connection.videoOrientation = .portrait
-            }
-            if connection.isVideoMirroringSupported && !connection.isVideoMirrored {
-                connection.automaticallyAdjustsVideoMirroring = false
-                connection.isVideoMirrored = true
-            }
-        }
+        previewLayer.frame = bounds
     }
 }

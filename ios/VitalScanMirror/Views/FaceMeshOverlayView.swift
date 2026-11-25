@@ -31,16 +31,14 @@ public struct FaceOvalShape: Shape {
 public struct FaceMeshOverlayView: View {
     public let scanState: ScanState
     public let progress: Double
-    public let roi: FaceROI?
     public let remainingSeconds: Int
 
     @State private var scanLineOffset: CGFloat = -140
     @State private var pulseScale: CGFloat = 1.0
 
-    public init(scanState: ScanState, progress: Double, roi: FaceROI?, remainingSeconds: Int) {
+    public init(scanState: ScanState, progress: Double, remainingSeconds: Int) {
         self.scanState = scanState
         self.progress = progress
-        self.roi = roi
         self.remainingSeconds = remainingSeconds
     }
 
@@ -71,14 +69,14 @@ public struct FaceMeshOverlayView: View {
                         LinearGradient(
                             colors: isMeasuring 
                                 ? [Color.cyan.opacity(0.8), Color.green.opacity(0.6), Color.cyan.opacity(0.8)]
-                                : (scanState == .faceAligned ? [Color.green, Color.mint] : [Color.white.opacity(0.5), Color.cyan.opacity(0.3)]),
+                                : [Color.green, Color.mint],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        style: StrokeStyle(lineWidth: isMeasuring ? 3.0 : (scanState == .faceAligned ? 2.5 : 2.0))
+                        style: StrokeStyle(lineWidth: isMeasuring ? 3.0 : 2.5)
                     )
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.6) : (scanState == .faceAligned ? Color.green.opacity(0.4) : Color.white.opacity(0.15)), radius: 8)
+                    .shadow(color: isMeasuring ? Color.cyan.opacity(0.6) : Color.green.opacity(0.4), radius: 8)
 
                 // 3. Vòng tiến trình đồng tâm KHỚP 100% VỚI KHUNG OVAL
                 if isMeasuring {
@@ -87,7 +85,7 @@ public struct FaceMeshOverlayView: View {
                         .stroke(Color.white.opacity(0.15), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .frame(width: ovalWidth + 12, height: ovalHeight + 12)
 
-                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ (Tránh slice rỗng khi progress = 0)
+                    // Vạch tiến trình chạy từ đỉnh theo chiều kim đồng hồ
                     if progress > 0.005 {
                         FaceOvalShape()
                             .trim(from: 0.001, to: min(1.0, max(0.01, CGFloat(progress))))
@@ -116,7 +114,7 @@ public struct FaceMeshOverlayView: View {
                         .offset(y: -ovalHeight * 0.5 - 20)
                 }
 
-                // 4. Tia quét Laser di chuyển lên xuống trong lòng khung
+                // 4. Tia quét Laser di chuyển lên xuống trong lòng khung khi đang quét
                 if isMeasuring {
                     Rectangle()
                         .fill(
@@ -135,7 +133,7 @@ public struct FaceMeshOverlayView: View {
                         }
                 }
 
-                // 5. Khung đánh dấu các vùng ROI (Trán & Má)
+                // 5. Khung đánh dấu các vùng ROI da (Trán & Má)
                 if isMeasuring {
                     VStack(spacing: ovalHeight * 0.28) {
                         // Vùng trán
@@ -227,7 +225,7 @@ public struct FaceMeshOverlayView: View {
         case .idle:
             return "Sẵn sàng quét gương mặt"
         case .searchingFace:
-            return "Đang tìm khuôn mặt... Nhìn thẳng vào camera"
+            return "Nhìn thẳng vào gương để quét"
         case .faceAligned:
             return "Đã khớp khuôn mặt! Nhấn nút Bắt đầu quét"
         case .calibrating:
